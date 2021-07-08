@@ -46,65 +46,46 @@ Page *BufferPoolManager::FetchPageImpl(page_id_t page_id) {
   // 4.     Update P's metadata, read in the page content from disk, and then return a pointer to P.
   latch_.lock();
   // search for requested p in page table
-  for (auto i = 0; i < (int)pool_size_; i++) {
-    if(pages_[i].page_id_!=INVALID_PAGE_ID && pages_[i].page_id_ == page_id) {
-      pages_[i].pin_count_++;
-      replacer_->Pin(i);
-      latch_.unlock();
-      std::cout<< "Our stupid fetch page result data is: " <<pages_[page_id].GetData()<<std::endl;
-      return &pages_[i];
-    }
+  std::unordered_map<page_id_t, frame_id_t>::const_iterator iter = page_table_.find(page_id);
+
+  // if found the page, pin it and return it immediately
+  frame_id_t frameId = -1;
+  if (iter != page_table_.end()) {
+    frameId = iter->second;
+    pages_[frameId].pin_count_++;
+    replacer_->Pin(page_id);
+    latch_.unlock();
+    return &pages_[frameId];
   }
 
-  // P not found in page table
-  int freeFrameId = -1;
-  if (free_list_.size() > 0) {
-    // pick a free page from the free list
-    freeFrameId = free_list_.front();
+  // first try to find the page from the free list
+  if (!free_list_.empty()) {
+    frameId = free_list_.front();
     free_list_.pop_front();
   } else {
-    // first check if all pages in the buffer pool are pinned
-    bool allPinned = true;
-    for (auto i = 0; i < (int)pool_size_; i++) {
-      if (pages_[i].GetPinCount() != 0) {
-        allPinned = false;
-        break;
-      }
-    }
-    // all pinned, no victim can be found
-    if (allPinned) {
+    // try to victimize a page
+    if (!replacer_->Victim(&frameId)) {
       latch_.unlock();
       return nullptr;
     }
-
-    // can find one victim from the CR
-    frame_id_t* victimIdxPtr = nullptr;
-    replacer_->Victim(victimIdxPtr);
-    int victimIdx = *victimIdxPtr;
-    victimIdxPtr = nullptr;
-    // flush the victim frame
-    FlushPageImplWithoutLock(pages_[victimIdx].page_id_);
-
-    // check if the pageMap contains the victim frame Id
-
-//    if (!pageMap.count(victimIdx)) {
-//      pageMap[(frame_id_t)victimIdx] = new Page{};
-//    }
-    freeFrameId = victimIdx;
   }
+  // if the page is dirty, write back
+  if (pages_[frameId].IsDirty()) {
+    page_id_t pageIdToDelete = pages_[frameId].GetPageId();
+    FlushPageImplWithoutLock(pageIdToDelete);
+    page_table_.erase(pageIdToDelete);
+  }
+  // Update P's metadata, read in the page content from disk
+  pages_[frameId].ResetMemory();
+  pages_[frameId].page_id_ = page_id; // used to be pageIdToDelete
+  pages_[frameId].is_dirty_ = false;
+  pages_[frameId].pin_count_ = 1;
+  disk_manager_->ReadPage(page_id, pages_[frameId].GetData());
 
-  // Todo: how to insert P? Pin?
-  // TODO: ?????????????
-  // update P's metadata
-//  pageMap[freeFrameId]->page_id_ = page_id;
-  pages_[freeFrameId].page_id_ = page_id;
-  disk_manager_->ReadPage(page_id, pages_[freeFrameId].GetData());
-
-  std::cout<< "Our stupid fetch page result data is: " << pages_[page_id].GetData() << std::endl;
+  page_table_.insert({page_id, frameId});
 
   latch_.unlock();
-//  return pageMap[freeFrameId];
-  return &pages_[freeFrameId];
+  return &pages_[frameId];
 }
 
 bool BufferPoolManager::UnpinPageImpl(page_id_t page_id, bool is_dirty) {
@@ -132,20 +113,21 @@ bool BufferPoolManager::UnpinPageImpl(page_id_t page_id, bool is_dirty) {
 bool BufferPoolManager::FlushPageImplWithoutLock(page_id_t page_id) {
   // Make sure you call DiskManager::WritePage!
   // Check if page id is valid
-  bool res = false;
-  if (page_id == INVALID_PAGE_ID) {
-    throw std::invalid_argument("The given page id cannot be INVALID_PAGE_ID!");
+
+  std::unordered_map<page_id_t, frame_id_t>::const_iterator iter = page_table_.find(page_id);
+
+  // if cannot found the page, return false
+  if (iter == page_table_.end()) {
+    return false;
   }
-  int targetPageIdx = FindTargetPageIdx(page_id);
-  if (targetPageIdx != -1) {
-    // If the page was found
-    if (pages_[targetPageIdx].is_dirty_) {
-      disk_manager_->WritePage(page_id,pages_[targetPageIdx].GetData());
-    }
-    DeletePageImplWithoutLock(page_id);
-    res = true;
+
+  frame_id_t frameId = iter->second;
+  // if the page is dirty, write back to disk
+  if (pages_[frameId].IsDirty()) {
+    disk_manager_->WritePage(page_id, pages_[frameId].GetData());
+    pages_[frameId].is_dirty_ = false;
   }
-  return res;
+  return true;
 }
 
 bool BufferPoolManager::FlushPageImpl(page_id_t page_id) {
@@ -198,85 +180,7 @@ Page *BufferPoolManager::NewPageImpl(page_id_t *page_id) {
   latch_.unlock();
   return &pages_[freeFrameId];
 }
-  // ----------- cql's code ends here ----------------------
 
-
-
-
-  /**
-   * --------------------------------------------------------
-  int freeFrameId = -1;
-  if (free_list_.size() > 0) {
-    // pick a free page from the free list
-    freeFrameId = free_list_.front();
-    free_list_.pop_front();
-  } else {
-    // first check if all pages in the buffer pool are pinned
-    bool allPinned = true;
-    for (auto i = 0; i < (int)pool_size_; i++) {
-      if (pages_[i].GetPinCount() == 0) {
-        allPinned = false;
-        break;
-      }
-    }
-    // all pinned, no victim can be found
-
-//    std::cout << "ALL PINNED = " << allPinned << std::endl;
-
-    if (allPinned) {
-
-      latch_.unlock();
-      return nullptr;
-    }
-
-    // cannot find victim from CR bc CR's empty
-    if (replacer_->Size() == 0) {
-      latch_.unlock();
-      return nullptr;
-    }
-
-    // can find one victim from the CR
-    frame_id_t* victimIdxPtr = nullptr;
-
-    std::cout << "Started VICTIM FUNCTION" << std::endl;
-
-    replacer_->Victim(victimIdxPtr);
-    int victimIdx = *victimIdxPtr;
-    victimIdxPtr = nullptr;
-    // flush the victim frame
-
-    std::cout << "Passed VICTIM FUNCTION" << std::endl;
-
-    FlushPageImplWithoutLock(pages_[victimIdx].page_id_);
-
-    freeFrameId = victimIdx;
-  }
-
-//  // check if the pageMap contains the victim frame Id
-//  if (!pageMap.count(freeFrameId)) {
-//    pageMap[(frame_id_t)freeFrameId] = new Page{};
-//  }
-
-  // TODO: update P's metadata, zero out memory
-  // update P's metadata
-//  char empty_data[0];
-//  std::memcpy(pageMap[freeFrameId]->GetData(), empty_data, PAGE_SIZE);
-//  std::memcpy(pageMap[freeFrameId]->GetData(), empty_data, PAGE_SIZE);
-  std::memset(pages_[freeFrameId].GetData(), 0, PAGE_SIZE);
-//  pageMap[freeFrameId]->page_id_ = freeFrameId;
-  pages_[freeFrameId].page_id_ = freeFrameId;
-  pages_[freeFrameId].pin_count_++;
-
-
-
-  *page_id = freeFrameId;
-
-  latch_.unlock();
-//  return pageMap[freeFrameId];
-  return &pages_[freeFrameId];
-}
-   --------------------------------------------------------
-   */
 
 
 
@@ -321,17 +225,17 @@ void BufferPoolManager::FlushAllPagesImpl() {
   }
   latch_.unlock();
 }
-
-// Helper functions below:
-int BufferPoolManager::FindTargetPageIdx(page_id_t targetId) {
-  for (int i = 0; i < (int)pool_size_; ++i) {
-//    std::cout << "Current page id is " << pages_[i].page_id_ << std::endl;
-    if (pages_[i].page_id_ != INVALID_PAGE_ID && pages_[i].page_id_ == targetId) {
-      return i;
-    }
-  }
-  return -1;
-}
+//
+//// Helper functions below:
+//int BufferPoolManager::FindTargetPageIdx(page_id_t targetId) {
+//  for (int i = 0; i < (int)pool_size_; ++i) {
+////    std::cout << "Current page id is " << pages_[i].page_id_ << std::endl;
+//    if (pages_[i].page_id_ != INVALID_PAGE_ID && pages_[i].page_id_ == targetId) {
+//      return i;
+//    }
+//  }
+//  return -1;
+//}
 
 
 }  // namespace bustub
