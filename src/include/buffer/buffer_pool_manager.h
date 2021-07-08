@@ -157,21 +157,10 @@ class BufferPoolManager {
   bool DeletePageImpl(page_id_t page_id);
 
   /**
-   * Helper function of DeletePageImpl, require external lock
-   * @param page_id id of page to be deleted
-   * @return false if the page exists but could not be deleted, true if the page didn't exist or deletion succeeded
-   */
-  bool DeletePageImplWithoutLock(page_id_t page_id);
-  /**
    * Flushes all the pages in the buffer pool to disk.
    */
   void FlushAllPagesImpl();
 
-  /**
-   * Find the index of the target page in the page table
-   * @return the index of the target page in the page table if found, otherwise return -1
-   */
-   int FindTargetPageIdx(page_id_t);
 
   /** Number of pages in the buffer pool. */
   size_t pool_size_;

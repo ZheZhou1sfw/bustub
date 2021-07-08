@@ -50,7 +50,6 @@ TEST(BufferPoolManagerTest, BinaryDataTest) {
 
   // Scenario: Once we have a page, we should be able to read and write content.
   std::memcpy(page0->GetData(), random_binary_data, PAGE_SIZE);
-  std::cout << "page0 data is " << page0->GetData() << std::endl;
   EXPECT_EQ(0, std::memcmp(page0->GetData(), random_binary_data, PAGE_SIZE));
 
   // Scenario: We should be able to create new pages until we fill up the buffer pool.
@@ -66,20 +65,16 @@ TEST(BufferPoolManagerTest, BinaryDataTest) {
   // Scenario: After unpinning pages {0, 1, 2, 3, 4} and pinning another 4 new pages,
   // there would still be one cache frame left for reading page 0.
   for (int i = 0; i < 5; ++i) {
-    std::cout << "000000000" << std::endl;
     EXPECT_EQ(true, bpm->UnpinPage(i, true));
     bpm->FlushPage(i);
   }
-  std::cout << "111111111" << std::endl;
 
   for (int i = 0; i < 5; ++i) {
     EXPECT_NE(nullptr, bpm->NewPage(&page_id_temp));
     bpm->UnpinPage(page_id_temp, false);
   }
-  std::cout << "222222222" << std::endl;
   // Scenario: We should be able to fetch the data we wrote a while ago.
   page0 = bpm->FetchPage(0);
-  std::cout << "page0 data is " << page0->GetData() << std::endl;
   EXPECT_EQ(0, memcmp(page0->GetData(), random_binary_data, PAGE_SIZE));
   EXPECT_EQ(true, bpm->UnpinPage(0, true));
 
